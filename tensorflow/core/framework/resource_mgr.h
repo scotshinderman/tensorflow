@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -25,11 +25,11 @@ limitations under the License.
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/type_index.h"
 #include "tensorflow/core/lib/core/refcount.h"
+#include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/lib/hash/hash.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/macros.h"
 #include "tensorflow/core/platform/thread_annotations.h"
-#include "tensorflow/core/public/status.h"
 
 namespace tensorflow {
 
@@ -122,6 +122,9 @@ class ResourceMgr {
 
   // Deletes all resources in all containers.
   void Clear();
+
+  // Returns a text description for all resources.
+  string DebugString() const;
 
  private:
   typedef std::pair<TypeIndex, string> Key;

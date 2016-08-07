@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -25,17 +25,15 @@ limitations under the License.
 #include "tensorflow/core/lib/gtl/array_slice.h"
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/lib/strings/strcat.h"
-#include "tensorflow/core/platform/port.h"
 #include "tensorflow/core/platform/test.h"
+#include "tensorflow/core/platform/types.h"
 
 namespace tensorflow {
 
 typedef FunctionDefHelper FDH;
 
 Status GetOpSig(const string& op, const OpDef** sig) {
-  Status s;
-  *sig = OpRegistry::Global()->LookUp(op, &s);
-  return s;
+  return OpRegistry::Global()->LookUpOpDef(op, sig);
 }
 
 REGISTER_OP("One")
@@ -51,7 +49,6 @@ y: A scalar in type T.
 static InstantiateAttrValueMap kNoAttrs;
 
 TEST(TFunc, SquarePlusOne) {
-  RequireDefaultOps();
   auto fdef = FDH::Define(
       // Name
       "SquarePlusOne",
@@ -560,14 +557,14 @@ TEST(InstantiateErrors, TypeList_Missing_Arg) {
 
 TEST(FunctionCallFrame, Void_Void) {
   FunctionCallFrame frame({}, {});
-  EXPECT_OK(frame.SetArgs({}));
+  TF_EXPECT_OK(frame.SetArgs({}));
   auto a = test::AsTensor<float>({100});
   HasError(frame.SetArgs({a}), "Invalid argument");
   Tensor v;
-  HasError(frame.GetArg(0, &v), "Out of range");
-  HasError(frame.SetRetval(0, v), "Out of range");
+  HasError(frame.GetArg(0, &v), "Invalid argument");
+  HasError(frame.SetRetval(0, v), "Invalid argument");
   std::vector<Tensor> rets;
-  EXPECT_OK(frame.GetRetvals(&rets));
+  TF_EXPECT_OK(frame.GetRetvals(&rets));
   EXPECT_EQ(rets.size(), 0);
 }
 
@@ -579,28 +576,28 @@ TEST(FunctionCallFrame, Float_Float_Float) {
   auto c = test::AsTensor<int64>({300});
   HasError(frame.SetArgs({a, c}),
            "Invalid argument: Expects arg[1] to be float");
-  EXPECT_OK(frame.SetArgs({a, b}));
+  TF_EXPECT_OK(frame.SetArgs({a, b}));
 
   Tensor v;
-  HasError(frame.GetArg(-1, &v), "Out of range");
-  HasError(frame.GetArg(2, &v), "Out of range");
-  EXPECT_OK(frame.GetArg(0, &v));
+  HasError(frame.GetArg(-1, &v), "Invalid argument");
+  HasError(frame.GetArg(2, &v), "Invalid argument");
+  TF_EXPECT_OK(frame.GetArg(0, &v));
   test::ExpectTensorEqual<float>(a, v);
-  EXPECT_OK(frame.GetArg(1, &v));
+  TF_EXPECT_OK(frame.GetArg(1, &v));
   test::ExpectTensorEqual<float>(b, v);
 
   v = test::AsTensor<float>({-100});
-  HasError(frame.SetRetval(-1, v), "Out of range");
-  HasError(frame.SetRetval(1, v), "Out of range");
+  HasError(frame.SetRetval(-1, v), "Invalid argument");
+  HasError(frame.SetRetval(1, v), "Invalid argument");
   HasError(frame.SetRetval(0, test::AsTensor<int64>({-100})),
            "Invalid argument: Expects ret[0] to be float");
 
   std::vector<Tensor> rets;
   HasError(frame.GetRetvals(&rets), "does not have value");
-  EXPECT_OK(frame.SetRetval(0, v));
+  TF_EXPECT_OK(frame.SetRetval(0, v));
   HasError(frame.SetRetval(0, v), "has already been set");
 
-  EXPECT_OK(frame.GetRetvals(&rets));
+  TF_EXPECT_OK(frame.GetRetvals(&rets));
   EXPECT_EQ(rets.size(), 1);
   test::ExpectTensorEqual<float>(rets[0], v);
 }
@@ -623,7 +620,7 @@ TEST(Canonicalize, Basic) {
 TEST(FunctionLibraryDefinitionTest, Find) {
   FunctionDefLibrary proto;
   *proto.add_function() = test::function::XTimesTwo();
-  FunctionLibraryDefinition lib_def(proto);
+  FunctionLibraryDefinition lib_def(OpRegistry::Global(), proto);
 
   EXPECT_EQ(lib_def.Find("XTimes16"), nullptr);
 
@@ -642,15 +639,64 @@ XTimesTwo[T:{float, double, int32, int64}](x:T) -> (y:T) {
 TEST(FunctionLibraryDefinitionTest, LookUp) {
   FunctionDefLibrary proto;
   *proto.add_function() = test::function::XTimesTwo();
-  FunctionLibraryDefinition lib_def(proto);
+  FunctionLibraryDefinition lib_def(OpRegistry::Global(), proto);
 
-  Status s;
-  EXPECT_EQ(lib_def.LookUp("XTimes16", &s), nullptr);
+  const OpDef* op_def;
+  EXPECT_TRUE(!lib_def.LookUpOpDef("XTimes16", &op_def).ok());
 
-  auto found = lib_def.LookUp("XTimesTwo", &s);
-  ASSERT_NE(found, nullptr);
-  EXPECT_EQ(found->DebugString(),
+  TF_EXPECT_OK(lib_def.LookUpOpDef("XTimesTwo", &op_def));
+  ASSERT_NE(op_def, nullptr);
+  EXPECT_EQ(op_def->DebugString(),
             test::function::XTimesTwo().signature().DebugString());
+}
+
+TEST(FunctionLibraryDefinitionTest, AddFunctionDef) {
+  // Add one function to the proto lib before constructing 'lib_def'.
+  FunctionDefLibrary proto;
+  *proto.add_function() = test::function::XTimesTwo();
+  FunctionLibraryDefinition lib_def(OpRegistry::Global(), proto);
+
+  // Add a new function def to the library.
+  TF_EXPECT_OK(lib_def.AddFunctionDef(test::function::WXPlusB()));
+
+  // Test lookup of first function.
+  const OpDef* first;
+  TF_EXPECT_OK(lib_def.LookUpOpDef("XTimesTwo", &first));
+  ASSERT_NE(first, nullptr);
+  EXPECT_EQ(first->DebugString(),
+            test::function::XTimesTwo().signature().DebugString());
+
+  // Test lookup of second function.
+  const OpDef* second;
+  TF_EXPECT_OK(lib_def.LookUpOpDef("WXPlusB", &second));
+  ASSERT_NE(second, nullptr);
+  EXPECT_EQ(second->DebugString(),
+            test::function::WXPlusB().signature().DebugString());
+}
+
+TEST(FunctionLibraryDefinitionTest, ToProto) {
+  FunctionDefLibrary proto1;
+  *proto1.add_function() = test::function::XTimesTwo();
+  *proto1.add_function() = test::function::WXPlusB();
+  FunctionLibraryDefinition lib_def1(OpRegistry::Global(), proto1);
+
+  // Call 'ToProto' and make sure both protos have the same function lib size.
+  FunctionDefLibrary proto2 = lib_def1.ToProto();
+  EXPECT_EQ(proto1.function_size(), proto2.function_size());
+
+  // Initialize 'lib_def2' with proto returned by 'ToProto' call.
+  FunctionLibraryDefinition lib_def2(OpRegistry::Global(), proto2);
+
+  // Test that the first function exists in both libraries.
+  const OpDef *f1, *f2, *f3, *f4;
+  TF_EXPECT_OK(lib_def1.LookUpOpDef("XTimesTwo", &f1));
+  TF_EXPECT_OK(lib_def2.LookUpOpDef("XTimesTwo", &f2));
+  EXPECT_EQ(f1->DebugString(), f2->DebugString());
+
+  // Test that the second function exists in both libraries.
+  TF_EXPECT_OK(lib_def1.LookUpOpDef("WXPlusB", &f3));
+  TF_EXPECT_OK(lib_def2.LookUpOpDef("WXPlusB", &f4));
+  EXPECT_EQ(f3->DebugString(), f4->DebugString());
 }
 
 }  // end namespace tensorflow

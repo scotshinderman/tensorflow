@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -52,7 +52,7 @@ class OptimizerCSE {
  public:
   explicit OptimizerCSE(Graph* g) : g_(g) {}
 
-  void Optimize(std::function<bool(const Node*)> consider_fn);
+  bool Optimize(std::function<bool(const Node*)> consider_fn);
 
  private:
   struct Scratch;
@@ -180,7 +180,7 @@ bool OptimizerCSE::Equivalent(const Node* a, const Node* b, Scratch* scratch) {
   return true;
 }
 
-void OptimizerCSE::Optimize(std::function<bool(const Node*)> consider_fn) {
+bool OptimizerCSE::Optimize(std::function<bool(const Node*)> consider_fn) {
   // This very simple implementation works if the whole graph is one
   // giant basic block (because we just traverse nodes in a
   // topological order).  We'll need to do something more
@@ -202,6 +202,7 @@ void OptimizerCSE::Optimize(std::function<bool(const Node*)> consider_fn) {
 
   // Scratch space for Equivalent calls.  Allocated here and passed in to
   // Equivalent to avoid allocation inside the loop below.
+  bool changed = false;
   Scratch scratch;
   for (Node* n : order) {
     if (!n->IsOp()) continue;
@@ -224,13 +225,15 @@ void OptimizerCSE::Optimize(std::function<bool(const Node*)> consider_fn) {
         g_->AddEdge(*candidate, e->src_output(), e->dst(), e->dst_input());
       }
       g_->RemoveNode(n);
+      changed = true;
     }
   }
+  return changed;
 }
 
-void OptimizeCSE(Graph* g, std::function<bool(const Node*)> consider_fn) {
+bool OptimizeCSE(Graph* g, std::function<bool(const Node*)> consider_fn) {
   OptimizerCSE opt(g);
-  opt.Optimize(consider_fn);
+  return opt.Optimize(consider_fn);
 }
 
 }  // namespace tensorflow

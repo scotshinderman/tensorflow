@@ -1,4 +1,4 @@
-# Copyright 2015 Google Inc. All Rights Reserved.
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,10 +19,10 @@ from __future__ import division
 from __future__ import print_function
 
 from six.moves import xrange  # pylint: disable=redefined-builtin
+
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
-from tensorflow.python.ops import constant_op
 from tensorflow.python.ops import data_flow_ops
 from tensorflow.python.ops import math_ops
 
@@ -68,6 +68,7 @@ ops.NoGradient("QueueEnqueue")
 ops.NoGradient("QueueEnqueueMany")
 ops.NoGradient("QueueDequeue")
 ops.NoGradient("QueueDequeueMany")
+ops.NoGradient("QueueDequeueUpTo")
 ops.NoGradient("QueueClose")
 ops.NoGradient("QueueSize")
 
@@ -76,51 +77,6 @@ ops.NoGradient("StackPush")
 ops.NoGradient("StackPop")
 ops.NoGradient("StackClose")
 
-ops.NoGradient("TensorArray")
-ops.NoGradient("TensorArrayGrad")
-ops.NoGradient("TensorArrayClose")
-
-
-@ops.RegisterGradient("TensorArrayRead")
-def _TensorArrayReadGrad(op, grad):
-  handle = op.inputs[0]
-  index = op.inputs[1]
-  dtype = op.get_attr("dtype")
-  g = data_flow_ops.TensorArray(size=None, dtype=dtype, handle=handle).grad()
-  w_g = g.write(index, grad)
-  return [None, None, w_g.flow]
-
-
-@ops.RegisterGradient("TensorArrayWrite")
-def _TensorArrayWriteGrad(op, flow):
-  # handle is the output store_handle of TensorArrayReadGrad or
-  # the handle output of TensorArrayWriteGrad.  we must use this one.
-  handle = op.inputs[0]
-  index = op.inputs[1]
-  dtype = op.get_attr("T")
-  g = data_flow_ops.TensorArray(size=None, dtype=dtype, handle=handle).grad()
-  with ops.control_dependencies([flow]):
-    grad = g.read(index)
-  return [None, None, grad, flow]
-
-
-@ops.RegisterGradient("TensorArrayPack")
-def _TensorArrayPackGrad(op, grad):
-  handle = op.inputs[0]
-  dtype = op.get_attr("dtype")
-  g = data_flow_ops.TensorArray(size=None, dtype=dtype, handle=handle).grad()
-  u_g = g.unpack(grad)
-  return [None, u_g.flow]
-
-
-@ops.RegisterGradient("TensorArrayUnpack")
-def _TensorArrayUnpackGrad(op, flow):
-  # handle is the output store_handle of TensorArrayReadGrad or
-  # the handle output of TensorArrayUnpackGrad.  we must use this one.
-  handle = op.inputs[0]
-  dtype = op.get_attr("T")
-  g = data_flow_ops.TensorArray(size=None, dtype=dtype, handle=handle).grad()
-  with ops.control_dependencies([flow]):
-    grad = g.pack()
-  return [None, grad, flow]
-# pylint: enable=protected-access
+ops.NoGradient("GetSessionHandle")
+ops.NoGradient("GetSessionTensor")
+ops.NoGradient("DeleteSessionTensor")

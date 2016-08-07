@@ -1,4 +1,4 @@
-# Copyright 2015 Google Inc. All Rights Reserved.
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,8 +18,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import tensorflow.python.platform
-
 import numpy as np
 import tensorflow as tf
 
@@ -27,7 +25,7 @@ from tensorflow.python.framework import random_seed
 from tensorflow.python.ops import init_ops
 
 
-# Returns true iff the two initalizers produce the same tensor to
+# Returns true iff the two initializers produce the same tensor to
 # within a tiny tolerance.
 def identicaltest(tc, init1, init2, use_gpu):
   """Tests if two initializations are identical to within tiny tolerances.
@@ -87,6 +85,39 @@ def _init_sampler(tc, init, num, use_gpu):
     with tc.test_session(use_gpu=use_gpu):
       return init([num]).eval()
   return func
+
+
+class ConstantInitializersTest(tf.test.TestCase):
+
+  def testZerosInitializer(self):
+    with self.test_session():
+      shape = [2, 3]
+      x = tf.get_variable("x", shape=shape, initializer=tf.zeros_initializer)
+      x.initializer.run()
+      self.assertAllEqual(x.eval(), np.zeros(shape))
+
+  def testOnesInitializer(self):
+    with self.test_session():
+      shape = [2, 3]
+      x = tf.get_variable("x", shape=shape, initializer=tf.ones_initializer)
+      x.initializer.run()
+      self.assertAllEqual(x.eval(), np.ones(shape))
+
+  def testConstantZeroInitializer(self):
+    with self.test_session():
+      shape = [2, 3]
+      x = tf.get_variable("x", shape=shape,
+                          initializer=tf.constant_initializer(0.0))
+      x.initializer.run()
+      self.assertAllEqual(x.eval(), np.zeros(shape))
+
+  def testConstantOneInitializer(self):
+    with self.test_session():
+      shape = [2, 3]
+      x = tf.get_variable("x", shape=shape,
+                          initializer=tf.constant_initializer(1.0))
+      x.initializer.run()
+      self.assertAllEqual(x.eval(), np.ones(shape))
 
 
 class RandomNormalInitializationTest(tf.test.TestCase):
@@ -245,42 +276,55 @@ class RangeTest(tf.test.TestCase):
 # TODO(vrv): move to sequence_ops_test?
 class LinSpaceTest(tf.test.TestCase):
 
+  def _gpu_modes(self):
+    if tf.test.is_gpu_available():
+      return [False, True]
+    else:
+      return [False]
+
   def _LinSpace(self, start, stop, num):
-    with self.test_session():
-      tf_ans = tf.linspace(start, stop, num, name="linspace")
-      self.assertEqual([num], tf_ans.get_shape())
-      return tf_ans.eval()
+    # NOTE(touts): Needs to pass a graph to get a new session each time.
+    with tf.Graph().as_default() as graph:
+      with self.test_session(graph=graph, force_gpu=self.force_gpu):
+        tf_ans = tf.linspace(start, stop, num, name="linspace")
+        self.assertEqual([num], tf_ans.get_shape())
+        return tf_ans.eval()
 
   def testPositive(self):
-    self.assertArrayNear(self._LinSpace(1., 5., 1), np.array([1.]), 1e-5)
-    self.assertArrayNear(self._LinSpace(1., 5., 2), np.array([1., 5.]), 1e-5)
-    self.assertArrayNear(self._LinSpace(1., 5., 3),
-                         np.array([1., 3., 5.]), 1e-5)
-    self.assertArrayNear(self._LinSpace(1., 5., 4),
-                         np.array([1., 7. / 3., 11. / 3., 5.]), 1e-5)
+    for self.force_gpu in self._gpu_modes():
+      self.assertArrayNear(self._LinSpace(1., 5., 1), np.array([1.]), 1e-5)
+      self.assertArrayNear(self._LinSpace(1., 5., 2), np.array([1., 5.]), 1e-5)
+      self.assertArrayNear(self._LinSpace(1., 5., 3),
+                           np.array([1., 3., 5.]), 1e-5)
+      self.assertArrayNear(self._LinSpace(1., 5., 4),
+                           np.array([1., 7. / 3., 11. / 3., 5.]), 1e-5)
 
   def testNegative(self):
-    self.assertArrayNear(self._LinSpace(-1., -5., 1), np.array([-1.]), 1e-5)
-    self.assertArrayNear(self._LinSpace(-1., -5., 2),
-                         np.array([-1., -5.]), 1e-5)
-    self.assertArrayNear(self._LinSpace(-1., -5., 3),
-                         np.array([-1., -3., -5.]), 1e-5)
-    self.assertArrayNear(self._LinSpace(-1., -5., 4),
-                         np.array([-1., -7. / 3., -11. / 3., -5.]), 1e-5)
+    for self.force_gpu in self._gpu_modes():
+      self.assertArrayNear(self._LinSpace(-1., -5., 1), np.array([-1.]), 1e-5)
+      self.assertArrayNear(self._LinSpace(-1., -5., 2),
+                           np.array([-1., -5.]), 1e-5)
+      self.assertArrayNear(self._LinSpace(-1., -5., 3),
+                           np.array([-1., -3., -5.]), 1e-5)
+      self.assertArrayNear(self._LinSpace(-1., -5., 4),
+                           np.array([-1., -7. / 3., -11. / 3., -5.]), 1e-5)
 
   def testNegativeToPositive(self):
-    self.assertArrayNear(self._LinSpace(-1., 5., 1), np.array([-1.]), 1e-5)
-    self.assertArrayNear(self._LinSpace(-1., 5., 2), np.array([-1., 5.]), 1e-5)
-    self.assertArrayNear(self._LinSpace(-1., 5., 3),
-                         np.array([-1., 2., 5.]), 1e-5)
-    self.assertArrayNear(self._LinSpace(-1., 5., 4),
-                         np.array([-1., 1., 3., 5.]), 1e-5)
+    for self.force_gpu in self._gpu_modes():
+      self.assertArrayNear(self._LinSpace(-1., 5., 1), np.array([-1.]), 1e-5)
+      self.assertArrayNear(self._LinSpace(-1., 5., 2), np.array([-1., 5.]),
+                           1e-5)
+      self.assertArrayNear(self._LinSpace(-1., 5., 3),
+                           np.array([-1., 2., 5.]), 1e-5)
+      self.assertArrayNear(self._LinSpace(-1., 5., 4),
+                           np.array([-1., 1., 3., 5.]), 1e-5)
 
   def testPoint(self):
-    self.assertArrayNear(self._LinSpace(5., 5., 1), np.array([5.]), 1e-5)
-    self.assertArrayNear(self._LinSpace(5., 5., 2), np.array([5.] * 2), 1e-5)
-    self.assertArrayNear(self._LinSpace(5., 5., 3), np.array([5.] * 3), 1e-5)
-    self.assertArrayNear(self._LinSpace(5., 5., 4), np.array([5.] * 4), 1e-5)
+    for self.force_gpu in self._gpu_modes():
+      self.assertArrayNear(self._LinSpace(5., 5., 1), np.array([5.]), 1e-5)
+      self.assertArrayNear(self._LinSpace(5., 5., 2), np.array([5.] * 2), 1e-5)
+      self.assertArrayNear(self._LinSpace(5., 5., 3), np.array([5.] * 3), 1e-5)
+      self.assertArrayNear(self._LinSpace(5., 5., 4), np.array([5.] * 4), 1e-5)
 
 
 class DeviceTest(tf.test.TestCase):
@@ -288,15 +332,15 @@ class DeviceTest(tf.test.TestCase):
   def testNoDevice(self):
     with tf.Graph().as_default():
       var = tf.Variable([[1.0, 1.0]])
-    self.assertEqual(None, var.device)
-    self.assertEqual(None, var.initializer.device)
+    self.assertDeviceEqual(None, var.device)
+    self.assertDeviceEqual(None, var.initializer.device)
 
   def testDevice(self):
     with tf.Graph().as_default():
       with tf.device("/job:ps"):
         var = tf.Variable([[1.0, 1.0]])
-    self.assertEqual("/job:ps", var.device)
-    self.assertEqual("/job:ps", var.initializer.device)
+    self.assertDeviceEqual("/job:ps", var.device)
+    self.assertDeviceEqual("/job:ps", var.initializer.device)
 
 
 if __name__ == "__main__":

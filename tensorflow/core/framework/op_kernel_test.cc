@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -120,8 +120,8 @@ class OpKernelTest : public ::testing::Test {
   void ExpectEqual(const string& what, const DataTypeVector& expected,
                    const DataTypeVector& observed) {
     EXPECT_EQ(expected.size(), observed.size()) << what;
-    const int size = std::min(expected.size(), observed.size());
-    for (int i = 0; i < size; ++i) {
+    const size_t size = std::min(expected.size(), observed.size());
+    for (size_t i = 0; i < size; ++i) {
       bool match = TypesCompatible(expected[i], observed[i]);
       EXPECT_TRUE(match) << what << " i:" << i << ", expected: " << expected[i]
                          << ", observed: " << observed[i];
@@ -182,7 +182,7 @@ TEST_F(OpKernelTest, SuccessBothCpuAndGpu) {
 TEST_F(OpKernelTest, CpuTypeRegistered) {
   NodeDef ndef = CreateNodeDef("Test1", {DT_FLOAT, DT_INT32});
   DeviceTypeVector devs;
-  ASSERT_OK(SupportedDeviceTypesForNode(DeviceTypes(), ndef, &devs));
+  TF_ASSERT_OK(SupportedDeviceTypesForNode(DeviceTypes(), ndef, &devs));
   EXPECT_EQ(1, devs.size());
   EXPECT_EQ(DeviceType(DEVICE_CPU), devs[0]);
 }
@@ -193,7 +193,7 @@ TEST_F(OpKernelTest, CpuAndGpuTypeRegistered) {
     // only on CPU.
     NodeDef ndef = CreateNodeDef("Test3", {DT_INT8, DT_INT8});
     DeviceTypeVector devs;
-    ASSERT_OK(SupportedDeviceTypesForNode(DeviceTypes(), ndef, &devs));
+    TF_ASSERT_OK(SupportedDeviceTypesForNode(DeviceTypes(), ndef, &devs));
     EXPECT_EQ(1, devs.size());
     EXPECT_EQ(DeviceType(DEVICE_CPU), devs[0]);
   }
@@ -202,7 +202,7 @@ TEST_F(OpKernelTest, CpuAndGpuTypeRegistered) {
     // only on GPU.
     NodeDef ndef = CreateNodeDef("Test3", {DT_FLOAT, DT_FLOAT});
     DeviceTypeVector devs;
-    ASSERT_OK(SupportedDeviceTypesForNode(DeviceTypes(), ndef, &devs));
+    TF_ASSERT_OK(SupportedDeviceTypesForNode(DeviceTypes(), ndef, &devs));
     EXPECT_EQ(1, devs.size());
     EXPECT_EQ(DeviceType(DEVICE_GPU), devs[0]);
   }
@@ -210,7 +210,7 @@ TEST_F(OpKernelTest, CpuAndGpuTypeRegistered) {
     // Try a node def of an op that is only registered for other types.
     NodeDef ndef = CreateNodeDef("Test3", {DT_STRING, DT_STRING});
     DeviceTypeVector devs;
-    ASSERT_OK(SupportedDeviceTypesForNode(DeviceTypes(), ndef, &devs));
+    TF_ASSERT_OK(SupportedDeviceTypesForNode(DeviceTypes(), ndef, &devs));
     EXPECT_EQ(0, devs.size());
   }
 
@@ -218,7 +218,7 @@ TEST_F(OpKernelTest, CpuAndGpuTypeRegistered) {
     // Try a node def of an op that is registered for both.
     NodeDef ndef = CreateNodeDef("Test4", {DT_FLOAT});
     DeviceTypeVector devs;
-    ASSERT_OK(SupportedDeviceTypesForNode(DeviceTypes(), ndef, &devs));
+    TF_ASSERT_OK(SupportedDeviceTypesForNode(DeviceTypes(), ndef, &devs));
     EXPECT_EQ(2, devs.size());
     EXPECT_EQ(DeviceType(DEVICE_GPU), devs[0]);
     EXPECT_EQ(DeviceType(DEVICE_CPU), devs[1]);
@@ -284,7 +284,8 @@ class DummyDevice : public DeviceBase {
 TEST_F(OpKernelTest, SaveTempFalse) {
   Env* env = Env::Default();
   OpKernelContext::Params params;
-  params.device = new DummyDevice(env, false);
+  params.record_tensor_accesses = false;
+  params.device = new DummyDevice(env, params.record_tensor_accesses);
   Status status;
   std::unique_ptr<OpKernel> op(
       CreateOpKernel(DEVICE_CPU, params.device, cpu_allocator(),
@@ -292,10 +293,10 @@ TEST_F(OpKernelTest, SaveTempFalse) {
                      TF_GRAPH_DEF_VERSION, &status));
   EXPECT_TRUE(status.ok());
   params.op_kernel = op.get();
-  OpKernelContext* ctx = new OpKernelContext(params);
+  OpKernelContext* ctx = new OpKernelContext(&params);
 
   Tensor t;
-  EXPECT_OK(ctx->allocate_temp(DT_FLOAT, TensorShape(), &t));
+  TF_EXPECT_OK(ctx->allocate_temp(DT_FLOAT, TensorShape(), &t));
 
   TensorReferenceVector referenced_tensors;
   ctx->retrieve_accessed_tensors(&referenced_tensors);
@@ -308,7 +309,8 @@ TEST_F(OpKernelTest, SaveTempFalse) {
 TEST_F(OpKernelTest, SaveTempTrue) {
   Env* env = Env::Default();
   OpKernelContext::Params params;
-  params.device = new DummyDevice(env, true);
+  params.record_tensor_accesses = true;
+  params.device = new DummyDevice(env, params.record_tensor_accesses);
   Status status;
   std::unique_ptr<OpKernel> op(
       CreateOpKernel(DEVICE_CPU, params.device, cpu_allocator(),
@@ -316,10 +318,10 @@ TEST_F(OpKernelTest, SaveTempTrue) {
                      TF_GRAPH_DEF_VERSION, &status));
   EXPECT_TRUE(status.ok());
   params.op_kernel = op.get();
-  OpKernelContext* ctx = new OpKernelContext(params);
+  OpKernelContext* ctx = new OpKernelContext(&params);
 
   Tensor t;
-  EXPECT_OK(ctx->allocate_temp(DT_FLOAT, TensorShape(), &t));
+  TF_EXPECT_OK(ctx->allocate_temp(DT_FLOAT, TensorShape(), &t));
 
   TensorReferenceVector referenced_tensors;
   ctx->retrieve_accessed_tensors(&referenced_tensors);
@@ -377,7 +379,7 @@ class OpKernelBuilderTest : public ::testing::Test {
 
     // Test SupportedDeviceTypesForNode()
     DeviceTypeVector devices;
-    EXPECT_OK(SupportedDeviceTypesForNode(DeviceTypes(), def, &devices));
+    TF_EXPECT_OK(SupportedDeviceTypesForNode(DeviceTypes(), def, &devices));
     bool found = false;
     for (DeviceType dt : devices) {
       if (dt == device_type) {
@@ -411,7 +413,7 @@ class OpKernelBuilderTest : public ::testing::Test {
       // Test SupportedDeviceTypesForNode().
       DeviceTypeVector devices;
       if (errors::IsNotFound(status)) {
-        EXPECT_OK(SupportedDeviceTypesForNode(DeviceTypes(), def, &devices));
+        TF_EXPECT_OK(SupportedDeviceTypesForNode(DeviceTypes(), def, &devices));
         for (DeviceType dt : devices) {
           EXPECT_NE(dt, device_type);
         }
@@ -422,6 +424,27 @@ class OpKernelBuilderTest : public ::testing::Test {
       }
     }
   }
+
+  string GetKernelClassName(const string& op_type, DeviceType device_type,
+                            const std::vector<string>& attrs,
+                            DataTypeSlice input_types = {}) {
+    NodeDef def = CreateNodeDef(op_type, attrs);
+    for (size_t i = 0; i < input_types.size(); ++i) {
+      def.add_input("a:0");
+    }
+
+    const KernelDef* kernel_def = nullptr;
+    string kernel_class_name;
+    const Status status =
+        FindKernelDef(device_type, def, &kernel_def, &kernel_class_name);
+    if (status.ok()) {
+      return kernel_class_name;
+    } else if (errors::IsNotFound(status)) {
+      return "not found";
+    } else {
+      return status.ToString();
+    }
+  }
 };
 
 REGISTER_OP("BuildCPU");
@@ -429,7 +452,9 @@ REGISTER_KERNEL_BUILDER(Name("BuildCPU").Device(DEVICE_CPU), DummyKernel);
 
 TEST_F(OpKernelBuilderTest, BuilderCPU) {
   ExpectSuccess("BuildCPU", DEVICE_CPU, {});
+  EXPECT_EQ("DummyKernel", GetKernelClassName("BuildCPU", DEVICE_CPU, {}));
   ExpectFailure("BuildCPU", DEVICE_GPU, {}, error::NOT_FOUND);
+  EXPECT_EQ("not found", GetKernelClassName("BuildCPU", DEVICE_GPU, {}));
 }
 
 REGISTER_OP("BuildGPU");
@@ -472,12 +497,26 @@ REGISTER_KERNEL_BUILDER(Name("BuildTypeListAttr")
 
 TEST_F(OpKernelBuilderTest, BuilderTypeListAttr) {
   ExpectSuccess("BuildTypeListAttr", DEVICE_CPU, {"T|list(type)|[]"});
+  EXPECT_EQ("DummyKernel", GetKernelClassName("BuildTypeListAttr", DEVICE_CPU,
+                                              {"T|list(type)|[]"}));
+
   ExpectSuccess("BuildTypeListAttr", DEVICE_CPU, {"T|list(type)|[DT_BOOL]"});
+  EXPECT_EQ("DummyKernel", GetKernelClassName("BuildTypeListAttr", DEVICE_CPU,
+                                              {"T|list(type)|[]"}));
+
   ExpectSuccess("BuildTypeListAttr", DEVICE_CPU,
                 {"T|list(type)|[DT_BOOL, DT_BOOL]"});
+
   ExpectFailure("BuildTypeListAttr", DEVICE_CPU, {"T|list(type)|[DT_FLOAT]"},
                 error::NOT_FOUND);
+  EXPECT_EQ("not found", GetKernelClassName("BuildTypeListAttr", DEVICE_CPU,
+                                            {"T|list(type)|[DT_FLOAT]"}));
+
   ExpectFailure("BuildTypeListAttr", DEVICE_CPU, {}, error::INVALID_ARGUMENT);
+  EXPECT_TRUE(
+      StringPiece(GetKernelClassName("BuildTypeListAttr", DEVICE_CPU, {}))
+          .contains("Invalid argument: "));
+
   ExpectFailure("BuildTypeListAttr", DEVICE_CPU, {"T|int|7"},
                 error::INVALID_ARGUMENT);
 }
@@ -745,43 +784,6 @@ TEST_F(GetAttrTest, TypeList) {
   EXPECT_EQ(DT_BOOL, get_attr_kernel->type_vector[1]);
 }
 
-REGISTER_OP("HostMemoryTest")
-    .Input("a: float")
-    .Input("b: T")
-    .Input("c: N * string")
-    .Output("o: N * T")
-    .Attr("T: type")
-    .Attr("N: int");
-REGISTER_KERNEL_BUILDER(Name("HostMemoryTest").Device(DEVICE_CPU), DummyKernel);
-REGISTER_KERNEL_BUILDER(Name("HostMemoryTest")
-                            .Device(DEVICE_GPU)
-                            .HostMemory("a")
-                            .HostMemory("c")
-                            .HostMemory("o"),
-                        DummyKernel);
-
-TEST(MemoryTypesForNode, Simple) {
-  NodeDef node_def;
-  ASSERT_OK(NodeDefBuilder("test", "HostMemoryTest")
-                .Input(FakeInput())
-                .Input(FakeInput(DT_BOOL))
-                .Input(FakeInput(3))
-                .Finalize(&node_def));
-  MemoryTypeVector input, output;
-
-  EXPECT_OK(MemoryTypesForNode(OpRegistry::Global(), DEVICE_CPU, node_def,
-                               &input, &output));
-  EXPECT_EQ(MemoryTypeVector(5, DEVICE_MEMORY), input);
-  EXPECT_EQ(MemoryTypeVector(3, DEVICE_MEMORY), output);
-
-  EXPECT_OK(MemoryTypesForNode(OpRegistry::Global(), DEVICE_GPU, node_def,
-                               &input, &output));
-  EXPECT_EQ(MemoryTypeVector({HOST_MEMORY, DEVICE_MEMORY, HOST_MEMORY,
-                              HOST_MEMORY, HOST_MEMORY}),
-            input);
-  EXPECT_EQ(MemoryTypeVector(3, HOST_MEMORY), output);
-}
-
 class BaseKernel : public ::tensorflow::OpKernel {
  public:
   explicit BaseKernel(OpKernelConstruction* context) : OpKernel(context) {}
@@ -813,6 +815,9 @@ TEST_F(LabelTest, Default) {
       ExpectSuccess("LabeledKernel", DEVICE_CPU, {});
   auto* get_labeled_kernel = static_cast<BaseKernel*>(op_kernel.get());
   EXPECT_EQ(0, get_labeled_kernel->Which());
+
+  EXPECT_EQ("LabeledKernel<0>",
+            GetKernelClassName("LabeledKernel", DEVICE_CPU, {}));
 }
 
 TEST_F(LabelTest, Specified) {
@@ -820,6 +825,8 @@ TEST_F(LabelTest, Specified) {
       ExpectSuccess("LabeledKernel", DEVICE_CPU, {"_kernel|string|'one'"});
   auto* get_labeled_kernel = static_cast<BaseKernel*>(op_kernel.get());
   EXPECT_EQ(1, get_labeled_kernel->Which());
+  EXPECT_EQ("LabeledKernel<1>", GetKernelClassName("LabeledKernel", DEVICE_CPU,
+                                                   {"_kernel|string|'one'"}));
 }
 
 TEST_F(LabelTest, Duplicate) {

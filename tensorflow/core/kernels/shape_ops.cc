@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,8 +20,9 @@ limitations under the License.
 #include <vector>
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
-#include "tensorflow/core/public/tensor.h"
-#include "tensorflow/core/public/tensor_shape.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/kernels/bounds_check.h"
 
 namespace tensorflow {
 
@@ -35,7 +36,15 @@ class ShapeOp : public OpKernel {
     Tensor* out = nullptr;
     OP_REQUIRES_OK(ctx, ctx->allocate_output(0, TensorShape({rank}), &out));
     auto vec = out->vec<int32>();
-    for (int i = 0; i < rank; ++i) vec(i) = inp.dim_size(i);
+    // TODO(dga): support int64.  b/28119922.
+    for (int i = 0; i < rank; ++i) {
+      int64 dim_size = inp.dim_size(i);
+      OP_REQUIRES(
+          ctx, FastBoundsCheck(dim_size, std::numeric_limits<int32>::max()),
+          errors::InvalidArgument("Shape does not support tensors > int32max",
+                                  " but dim ", i, " is ", dim_size));
+      vec(i) = static_cast<int32>(dim_size);
+    }
   }
 
   bool IsExpensive() override { return false; }
@@ -43,6 +52,7 @@ class ShapeOp : public OpKernel {
 REGISTER_KERNEL_BUILDER(Name("Shape").Device(DEVICE_CPU).HostMemory("output"),
                         ShapeOp);
 
+#if GOOGLE_CUDA
 #define REGISTER_GPU_KERNEL(type)                         \
   REGISTER_KERNEL_BUILDER(Name("Shape")                   \
                               .Device(DEVICE_GPU)         \
@@ -61,6 +71,7 @@ REGISTER_KERNEL_BUILDER(Name("Shape")
                             .HostMemory("output")
                             .TypeConstraint<int32>("T"),
                         ShapeOp);
+#endif
 
 class ShapeNOp : public OpKernel {
  public:
@@ -73,7 +84,17 @@ class ShapeNOp : public OpKernel {
       Tensor* out = nullptr;
       OP_REQUIRES_OK(ctx, ctx->allocate_output(i, {dims}, &out));
       auto vec = out->vec<int32>();
-      for (int j = 0; j < dims; ++j) vec(j) = shape.dim_size(j);
+
+      // TODO(dga): support int64.  b/28119922.
+      for (int j = 0; j < dims; ++j) {
+        int64 dim_size = shape.dim_size(j);
+        OP_REQUIRES(
+            ctx, FastBoundsCheck(dim_size, std::numeric_limits<int32>::max()),
+            errors::InvalidArgument("Shape does not support tensors > int32max",
+                                    " but shape ", i, " dim ", j, " is ",
+                                    dim_size));
+        vec(j) = static_cast<int32>(dim_size);
+      }
     }
   }
 
@@ -82,6 +103,7 @@ class ShapeNOp : public OpKernel {
 REGISTER_KERNEL_BUILDER(Name("ShapeN").Device(DEVICE_CPU).HostMemory("output"),
                         ShapeNOp);
 
+#if GOOGLE_CUDA
 #define REGISTER_GPU_KERNEL(type)                         \
   REGISTER_KERNEL_BUILDER(Name("ShapeN")                  \
                               .Device(DEVICE_GPU)         \
@@ -100,6 +122,7 @@ REGISTER_KERNEL_BUILDER(Name("ShapeN")
                             .HostMemory("output")
                             .TypeConstraint<int32>("T"),
                         ShapeNOp);
+#endif
 
 class RankOp : public OpKernel {
  public:
@@ -118,6 +141,7 @@ class RankOp : public OpKernel {
 REGISTER_KERNEL_BUILDER(Name("Rank").Device(DEVICE_CPU).HostMemory("output"),
                         RankOp);
 
+#if GOOGLE_CUDA
 #define REGISTER_GPU_KERNEL(type)                        \
   REGISTER_KERNEL_BUILDER(Name("Rank")                   \
                               .Device(DEVICE_GPU)        \
@@ -143,6 +167,7 @@ REGISTER_KERNEL_BUILDER(Name("Rank")
                             .HostMemory("input")
                             .HostMemory("output"),
                         RankOp);
+#endif
 
 class SizeOp : public OpKernel {
  public:
@@ -153,8 +178,11 @@ class SizeOp : public OpKernel {
     const int64 size = inp.NumElements();
     Tensor* out = nullptr;
     OP_REQUIRES_OK(ctx, ctx->allocate_output(0, TensorShape({}), &out));
-    // TODO(josh11b): switch output to int64?
-    out->scalar<int32>()() = size;
+    OP_REQUIRES(ctx, FastBoundsCheck(size, std::numeric_limits<int32>::max()),
+                errors::InvalidArgument("Size does not work for tensors > "
+                                        "int32 max."));
+    // TODO(josh11b): switch output to int64?  (b/28119922)
+    out->scalar<int32>()() = static_cast<int32>(size);
   }
 
   bool IsExpensive() override { return false; }
@@ -162,6 +190,7 @@ class SizeOp : public OpKernel {
 REGISTER_KERNEL_BUILDER(Name("Size").Device(DEVICE_CPU).HostMemory("output"),
                         SizeOp);
 
+#if GOOGLE_CUDA
 #define REGISTER_GPU_KERNEL(type)                        \
   REGISTER_KERNEL_BUILDER(Name("Size")                   \
                               .Device(DEVICE_GPU)        \
@@ -180,6 +209,7 @@ REGISTER_KERNEL_BUILDER(Name("Size")
                             .HostMemory("input")
                             .HostMemory("output"),
                         SizeOp);
+#endif
 
 class ExpandDimsOp : public OpKernel {
  public:
@@ -194,7 +224,9 @@ class ExpandDimsOp : public OpKernel {
                                 " dimensions."));
 
     auto existing_dims = ctx->input(0).shape().dim_sizes();
-    std::vector<int64> new_shape(existing_dims.size());
+    // Safe - # elements in tensor dims bounded.
+    const int existing_dims_size = static_cast<int>(existing_dims.size());
+    std::vector<int64> new_shape(existing_dims_size);
     for (size_t i = 0; i < new_shape.size(); ++i) {
       new_shape[i] = existing_dims[i];
     }
@@ -206,7 +238,7 @@ class ExpandDimsOp : public OpKernel {
     }
 
     // Clamp to the end if needed.
-    dim = std::min<int32>(dim, existing_dims.size());
+    dim = std::min<int32>(dim, existing_dims_size);
     new_shape.emplace(new_shape.begin() + dim, 1);
     const TensorShape output_shape(new_shape);
 
@@ -221,10 +253,13 @@ class ExpandDimsOp : public OpKernel {
                            " and output shape ", output_shape.DebugString()));
     }
   }
+
+  bool IsExpensive() override { return false; }
 };
 REGISTER_KERNEL_BUILDER(Name("ExpandDims").Device(DEVICE_CPU).HostMemory("dim"),
                         ExpandDimsOp);
 
+#if GOOGLE_CUDA
 #define REGISTER_GPU_KERNEL(type)                        \
   REGISTER_KERNEL_BUILDER(Name("ExpandDims")             \
                               .Device(DEVICE_GPU)        \
@@ -241,6 +276,7 @@ REGISTER_KERNEL_BUILDER(Name("ExpandDims")
                             .HostMemory("dim")
                             .HostMemory("output"),
                         ExpandDimsOp);
+#endif
 
 class SqueezeOp : public OpKernel {
  public:
@@ -252,6 +288,7 @@ class SqueezeOp : public OpKernel {
 
   void Compute(OpKernelContext* ctx) override {
     auto existing_dims = ctx->input(0).shape().dim_sizes();
+    const int existing_dims_size = static_cast<int>(existing_dims.size());
     std::vector<int64> new_shape;
 
     std::unordered_set<int32> wrapped_squeeze_dims;
@@ -265,13 +302,13 @@ class SqueezeOp : public OpKernel {
                                   " dimensions."));
       // If dim is < 0, we wrap around (-1 means the last element).
       if (dim < 0) {
-        dim = existing_dims.size() + dim;
+        dim = existing_dims_size + dim;
       }
 
       wrapped_squeeze_dims.insert(dim);
     }
 
-    for (size_t i = 0; i < existing_dims.size(); ++i) {
+    for (int i = 0; i < existing_dims_size; ++i) {
       auto existing_dim = existing_dims[i];
 
       // If squeeze_set is non-empty, only squeeze those dimensions.
@@ -307,17 +344,31 @@ class SqueezeOp : public OpKernel {
     }
   }
 
+  bool IsExpensive() override { return false; }
+
  private:
   std::unordered_set<int32> squeeze_dims_;
 };
 
 REGISTER_KERNEL_BUILDER(Name("Squeeze").Device(DEVICE_CPU), SqueezeOp);
 
+#if GOOGLE_CUDA
 #define REGISTER_GPU_KERNEL(type)                                   \
   REGISTER_KERNEL_BUILDER(                                          \
       Name("Squeeze").Device(DEVICE_GPU).TypeConstraint<type>("T"), \
       SqueezeOp);
-TF_CALL_NUMBER_TYPES(REGISTER_GPU_KERNEL);
+TF_CALL_NUMBER_TYPES_NO_INT32(REGISTER_GPU_KERNEL);
 #undef REGISTER_GPU_KERNEL
+
+// A special GPU kernel for int32.
+// TODO(b/25387198): Also enable int32 in device memory. This kernel
+// registration requires all int32 inputs and outputs to be in host memory.
+REGISTER_KERNEL_BUILDER(Name("Squeeze")
+                            .Device(DEVICE_GPU)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("input")
+                            .HostMemory("output"),
+                        SqueezeOp);
+#endif
 
 }  // namespace tensorflow

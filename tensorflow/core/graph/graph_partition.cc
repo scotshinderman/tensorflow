@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,8 +19,8 @@ limitations under the License.
 #include <unordered_map>
 #include <vector>
 
+#include "tensorflow/core/framework/memory_types.h"
 #include "tensorflow/core/framework/node_def_builder.h"
-#include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/graph/costmodel.h"
 #include "tensorflow/core/graph/graph_def_builder.h"
@@ -28,6 +28,7 @@ limitations under the License.
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/hash/hash.h"
 #include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/util/device_name_utils.h"
 
 namespace tensorflow {
 
@@ -118,6 +119,7 @@ bool NeedSameDeviceSendRecv(const Edge* edge, const GraphInfo& info) {
   if (src->assigned_device_name() == dst->assigned_device_name()) {
     int src_port = edge->src_output();
     int dst_port = edge->dst_input();
+    // TODO(vrv): Shouldn't this be != DEVICE_CPU?
     if (info.device_types[src->id()] == DEVICE_GPU) {
       auto src_it = info.output_types.find({src->id(), src_port});
       DCHECK(src_it != info.output_types.end());
@@ -624,7 +626,6 @@ Status AddControlLoop(const PartitionOptions& opts, Graph* g, const Node* src,
 // TODO(yuanbyu): It might be simpler if we convert MemoryType to
 // DeviceType for the inputs/outputs of each node.
 Status BuildMemoryDeviceInfo(const Graph& g, GraphInfo* info) {
-  Status status;
   MemoryTypeVector input_memory_types;
   MemoryTypeVector output_memory_types;
 
@@ -639,14 +640,9 @@ Status BuildMemoryDeviceInfo(const Graph& g, GraphInfo* info) {
                               node->assigned_device_name(), "'");
     }
 
-    input_memory_types.clear();
-    input_memory_types.resize(node->num_inputs());
-    output_memory_types.clear();
-    output_memory_types.resize(node->num_outputs());
-    status = MemoryTypesForNode(g.op_registry(), DeviceType(parsed.type),
-                                node->def(), &input_memory_types,
-                                &output_memory_types);
-    if (!status.ok()) return status;
+    TF_RETURN_IF_ERROR(MemoryTypesForNode(
+        g.op_registry(), DeviceType(parsed.type), node->def(),
+        &input_memory_types, &output_memory_types));
 
     int node_id = node->id();
     info->device_types[node_id] = DeviceType(parsed.type);
@@ -657,7 +653,7 @@ Status BuildMemoryDeviceInfo(const Graph& g, GraphInfo* info) {
       info->output_types[{node_id, i}] = output_memory_types[i];
     }
   }
-  return status;
+  return Status::OK();
 }
 
 // Each participating device needs to decide a) if there is a next iteration,
@@ -939,13 +935,15 @@ Status Partition(const PartitionOptions& opts, Graph* g,
     ref_recvs.clear();
     ref_control_inputs.clear();
     const Edge* control_flow_edge = nullptr;
+    int32 num_control_flow_edges = 0;
     for (const Edge* edge : dst->in_edges()) {
       if (edge->IsControlEdge()) {
         if (IsMerge(edge->src()) && IsControlLoop(edge->src())) {
           // This is one of the control edges added for control flow. There
           // can be multiple such edges as the dest node may have multiple
-          // remote inputs. We will just take one and ignore the others.
+          // remote inputs. We keep track of the number of such edges.
           control_flow_edge = edge;
+          ++num_control_flow_edges;
         } else {
           inputs.push_back(edge);
         }
@@ -957,7 +955,6 @@ Status Partition(const PartitionOptions& opts, Graph* g,
 
     // Process in order so that all data edges are added as inputs to
     // dst in Edge::dst_input() order.
-    bool recv_added = false;
     for (const Edge* edge : inputs) {
       const Node* src = edge->src();
       if (!src->IsOp()) continue;  // Skip Sink/Source nodes.
@@ -1004,6 +1001,8 @@ Status Partition(const PartitionOptions& opts, Graph* g,
         } else {
           AddInput(dst_def, recv_node_name, 0);
         }
+        ref_control_inputs.push_back(recv_node_name);
+
         // We want the start_time for the recv to be the smallest of the start
         // times of it's consumers. So we update this whenever we use a recv,
         // and write it out to the attribute at the end of the subroutine
@@ -1043,19 +1042,19 @@ Status Partition(const PartitionOptions& opts, Graph* g,
           AddRecv(opts, g_info, dst_graph, edge, &real_recv, &status);
       if (!status.ok()) return status;
 
-      // Fix up the control flow edge. Redirect it to the recv.
+      // Fix up the control flow edge.
       // NOTE(yuanbyu): 'real_recv' must be the real recv node.
-      recv_added = true;
-      if (control_flow_edge != nullptr) {
+      if (src_graph == dst_graph) {
+        // For same device send/recv, add a control edge from send to recv.
+        // This prevents the asynchronous recv kernel from being scheduled
+        // before the data is available.
+        AddInput(real_recv, send->name(), Graph::kControlSlot);
+      } else if (control_flow_edge != nullptr) {
+        // Redirect control edge to the real recv since this is not a same
+        // device send/recv.
+        --num_control_flow_edges;
         AddInput(real_recv, control_flow_edge->src()->name(),
                  Graph::kControlSlot);
-      }
-
-      // For same device send/recv, add a control edge from send to recv.
-      // This prevents the asynchronous recv kernel from being scheduled
-      // immediately.
-      if (src_graph == dst_graph) {
-        AddInput(real_recv, send->name(), Graph::kControlSlot);
       }
 
       if (!edge->IsControlEdge() &&
@@ -1094,15 +1093,18 @@ Status Partition(const PartitionOptions& opts, Graph* g,
     // execution of recvs until all the other inputs become available.
     AddReadControl(ref_recvs, ref_control_inputs);
 
-    // Add back this control edge for control flow if not used.
-    if (!recv_added && (control_flow_edge != nullptr)) {
-      AddInput(dst_def, control_flow_edge->src()->name(), Graph::kControlSlot);
+    // Add back the control edges for control flow that are not used.
+    if (control_flow_edge != nullptr) {
+      for (int i = 0; i < num_control_flow_edges; ++i) {
+        AddInput(dst_def, control_flow_edge->src()->name(),
+                 Graph::kControlSlot);
+      }
     }
   }
 
   // Set versions
   for (auto& it : *partitions) {
-    it.second.set_version(g->version());
+    it.second.mutable_versions()->CopyFrom(g->versions());
   }
 
   // Set the start times for recvs at the very end.

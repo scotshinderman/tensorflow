@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -26,11 +26,11 @@ limitations under the License.
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/kernels/ops_util.h"
+#include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/lib/gtl/array_slice.h"
 #include "tensorflow/core/platform/mem.h"
-#include "tensorflow/core/public/status.h"
-#include "tensorflow/core/public/tensor.h"
 
 namespace tensorflow {
 
@@ -155,7 +155,7 @@ class SliceOp : public OpKernel {
         // TODO(agarwal): Consider multi-threading this loop for cases where
         // size[0] is very large.
         for (int i = 0; i < size[0]; ++i) {
-          const int row = begin[0] + i;
+          const int64 row = begin[0] + i;
           if (i + 1 < size[0]) {
             port::prefetch<port::PREFETCH_HINT_T0>(&output(i + 1, 0));
             port::prefetch<port::PREFETCH_HINT_T0>(&input(row + 1, begin[1]));
@@ -251,7 +251,19 @@ DECLARE_FOR_N(int32);
                           SliceOp<GPUDevice, type>)
 
 TF_CALL_GPU_NUMBER_TYPES(REGISTER_GPU);
-REGISTER_GPU(int32);
+
+// A special GPU kernel for int32.
+// TODO(b/25387198): Also enable int32 in device memory. This kernel
+// registration requires all int32 inputs and outputs to be in host memory.
+REGISTER_KERNEL_BUILDER(Name("Slice")
+                            .Device(DEVICE_GPU)
+                            .TypeConstraint<int32>("T")
+                            .TypeConstraint<int32>("Index")
+                            .HostMemory("input")
+                            .HostMemory("begin")
+                            .HostMemory("size")
+                            .HostMemory("output"),
+                        SliceOp<CPUDevice, int32>);
 
 #undef REGISTER_GPU
 

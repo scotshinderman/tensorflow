@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -156,7 +156,7 @@ TEST(TensorSliceTest, SliceTensorShape) {
     TensorSlice a = TensorSlice::ParseOrDie("1,1:-:4,1:2,6");
     TensorShape x({2, 4, 5, 8});
     TensorShape y;
-    EXPECT_OK(a.SliceTensorShape(x, &y));
+    TF_EXPECT_OK(a.SliceTensorShape(x, &y));
     EXPECT_EQ("[1,4,1,6]", y.DebugString());
   }
 
@@ -246,6 +246,17 @@ TEST(TensorSliceTest, Deserialization) {
   // Both serializations should be interpreted the same.
   EXPECT_EQ("0,5:0,10:14,1:-:-", ts2.DebugString());
   EXPECT_EQ("0,5:0,10:14,1:-:-", ts3.DebugString());
+}
+
+TEST(TensorSliceTest, UpdateToCover) {
+  // [2:4, :, 3:]
+  TensorSlice s({{2, 2}, {0, -1}, {3, 7}});
+  // [:, 1:4, 2:4]
+  TensorSlice other({{0, -1}, {1, 3}, {2, 2}});
+
+  s.UpdateToCover(other);
+  // [:, :, 2:]
+  EXPECT_EQ("-:-:2,8", s.DebugString());
 }
 
 }  // namespace

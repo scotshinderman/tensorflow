@@ -1,4 +1,4 @@
-# Copyright 2015 Google Inc. All Rights Reserved.
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,8 +17,6 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-
-import tensorflow.python.platform
 
 import numpy as np
 import tensorflow as tf
@@ -125,6 +123,17 @@ class ReluTest(tf.test.TestCase):
                                            x_init_value=x_init)
     print("relu (float64) gradient of gradient err = ", err)
     self.assertLess(err, 1e-10)
+
+  def testGradientScalar(self):
+    with self.test_session() as sess:
+      x = tf.Variable(100.)
+      y = tf.nn.relu(x)
+      loss = y**2
+      optimizer = tf.train.GradientDescentOptimizer(learning_rate=0.25)
+      train_op = optimizer.minimize(loss)
+      sess.run(tf.initialize_all_variables())
+      sess.run(train_op)
+      self.assertAllClose(x.eval(), 50.0)
 
 
 class Relu6Test(tf.test.TestCase):

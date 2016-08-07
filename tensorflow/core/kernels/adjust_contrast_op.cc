@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,16 +16,16 @@ limitations under the License.
 // See docs in ../ops/image_ops.cc
 #define EIGEN_USE_THREADS
 
+#include "tensorflow/core/kernels/adjust_contrast_op.h"
 #include <memory>
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/types.h"
-#include "tensorflow/core/kernels/adjust_contrast_op.h"
+#include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/platform/logging.h"
-#include "tensorflow/core/public/status.h"
-#include "tensorflow/core/public/tensor.h"
-#include "tensorflow/core/public/tensor_shape.h"
 
 namespace tensorflow {
 
@@ -38,7 +38,6 @@ template <typename Device, typename T>
 class AdjustContrastOp : public OpKernel {
  public:
   explicit AdjustContrastOp(OpKernelConstruction* context) : OpKernel(context) {
-    OP_DEPRECATED(context, 2, "Use AdjustContrastv2 instead");
   }
 
   void Compute(OpKernelContext* context) override {
@@ -183,12 +182,10 @@ void AdjustContrastv2<GPUDevice>::operator()(
     typename TTypes<float>::ConstScalar contrast_factor,
     typename TTypes<float, 4>::Tensor output);
 extern template struct AdjustContrastv2<GPUDevice>;
-#undef DECLARE_GPU_SPEC
 }  // namespace functor
 
 REGISTER_KERNEL_BUILDER(Name("AdjustContrastv2").Device(DEVICE_GPU),
                         AdjustContrastOpv2<GPUDevice>);
-
 #endif  // GOOGLE_CUDA
 
 }  // namespace tensorflow

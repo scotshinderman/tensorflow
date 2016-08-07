@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,9 +22,20 @@ namespace tensorflow {
 namespace internal {
 
 Status LoadLibrary(const char* library_filename, void** handle) {
+#if !defined(__ANDROID__)
+  // Check to see if the library has been already loaded by the process, if so
+  // return an error status. Note: dlopen with RTLD_NOLOAD flag returns a
+  // non-null pointer if the library has already been loaded, and null
+  // otherwise.
+  *handle = dlopen(library_filename, RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD);
+  if (*handle) {
+    return errors::AlreadyExists(library_filename, " has already been loaded");
+  }
+#endif  // !defined(__ANDROID__)
+
   *handle = dlopen(library_filename, RTLD_NOW | RTLD_LOCAL);
   if (!*handle) {
-    return errors::NotFound("Unable to find library ", library_filename);
+    return errors::NotFound(dlerror());
   }
   return Status::OK();
 }
@@ -33,10 +44,27 @@ Status GetSymbolFromLibrary(void* handle, const char* symbol_name,
                             void** symbol) {
   *symbol = dlsym(handle, symbol_name);
   if (!*symbol) {
-    return errors::NotFound("Unable to find symbol ", symbol_name,
-                            " in library");
+    return errors::NotFound(dlerror());
   }
   return Status::OK();
+}
+
+string FormatLibraryFileName(const string& name, const string& version) {
+  string filename;
+#if defined(__APPLE__)
+  if (version.size() == 0) {
+    filename = "lib" + name + ".dylib";
+  } else {
+    filename = "lib" + name + "." + version + ".dylib";
+  }
+#else
+  if (version.size() == 0) {
+    filename = "lib" + name + ".so";
+  } else {
+    filename = "lib" + name + ".so" + "." + version;
+  }
+#endif
+  return filename;
 }
 
 }  // namespace internal

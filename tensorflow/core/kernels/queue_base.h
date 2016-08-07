@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,23 +13,27 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef THIRD_PARTY_TENSORFLOW_CORE_KERNELS_QUEUE_BASE_H_
-#define THIRD_PARTY_TENSORFLOW_CORE_KERNELS_QUEUE_BASE_H_
+#ifndef TENSORFLOW_CORE_KERNELS_QUEUE_BASE_H_
+#define TENSORFLOW_CORE_KERNELS_QUEUE_BASE_H_
 
 #include <deque>
 #include <vector>
 
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/queue_interface.h"
+#include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/lib/gtl/array_slice.h"
 #include "tensorflow/core/platform/macros.h"
 #include "tensorflow/core/platform/mutex.h"
-#include "tensorflow/core/platform/port.h"
-#include "tensorflow/core/public/tensor.h"
-#include "tensorflow/core/public/tensor_shape.h"
+#include "tensorflow/core/platform/types.h"
 
 namespace tensorflow {
+
+namespace barrier {
+class Barrier;
+}  // namespace barrier
 
 // Functionality common to asynchronous QueueInterface implementations.
 class QueueBase : public QueueInterface {
@@ -65,6 +69,19 @@ class QueueBase : public QueueInterface {
 
   int32 capacity() const { return capacity_; }
 
+  bool closed() {
+    mutex_lock lock(mu_);
+    return closed_;
+  }
+
+  // Copies the index^th slice (in the first dimension) of parent into element.
+  static Status CopySliceToElement(const Tensor& parent, Tensor* element,
+                                   int64 index);
+
+  // Copies element into the index^th slice (in the first dimension) of parent.
+  static Status CopyElementToSlice(const Tensor& element, Tensor* parent,
+                                   int64 index);
+
  protected:
   enum Action { kEnqueue, kDequeue };
   enum RunResult { kNoProgress, kProgress, kComplete };
@@ -98,14 +115,6 @@ class QueueBase : public QueueInterface {
     return shape;
   }
 
-  // Copies the index^th slice (in the first dimension) of parent into element.
-  static Status CopySliceToElement(const Tensor& parent, Tensor* element,
-                                   int index);
-
-  // Copies element into the index^th slice (in the first dimension) of parent.
-  static Status CopyElementToSlice(const Tensor& element, Tensor* parent,
-                                   int index);
-
   void Cancel(Action action, CancellationManager* cancellation_manager,
               CancellationToken token);
 
@@ -120,7 +129,7 @@ class QueueBase : public QueueInterface {
   // of the *_attempts_ queues.
   void FlushUnlocked();
 
-  ~QueueBase() override {}
+  ~QueueBase() override;
 
   // Helpers for implementing MatchesNodeDef().
   static string ShapeListString(const gtl::ArraySlice<TensorShape>& shapes);
@@ -170,4 +179,4 @@ class QueueBase : public QueueInterface {
 
 }  // namespace tensorflow
 
-#endif  // THIRD_PARTY_TENSORFLOW_CORE_KERNELS_QUEUE_BASE_H_
+#endif  // TENSORFLOW_CORE_KERNELS_QUEUE_BASE_H_
